@@ -70,6 +70,7 @@ def main():
     ap.add_argument("--speed", type=float, default=config.CONTROL["max_speed"], help="摇杆模式最大速度 像素/秒")
     ap.add_argument("--dead-zone", type=float, default=config.CONTROL["dead_zone"])
     ap.add_argument("--calib", default=str(config.CALIB_FILE))
+    ap.add_argument("--no-brow", action="store_true", help="禁用挑眉（右键改为咬牙 0.6–1 秒）")
     for d, cn in (("right", "右"), ("left", "左"), ("up", "上"), ("down", "下")):
         ap.add_argument(f"--{d}-uv", type=float, default=None,
                         help=f"手动指定看{cn}时眼电变化（µV，带正负号），覆盖校准值；"
@@ -85,6 +86,8 @@ def main():
         v = getattr(args, f"{d}_uv")
         if v is not None:
             calib["eog"][d] = v
+    if args.no_brow:
+        calib["emg"].update(brow_hi=1e9, brow_lo=1e9, brow_disabled=True)
     e = calib["eog"]
     print(f"眼电幅度（µV）：右 {e['right']:+.0f}  左 {e['left']:+.0f}  上 {e['up']:+.0f}  下 {e['down']:+.0f}"
           f"   → 死区 {args.dead_zone:.2f}，即偏移超过约 {args.dead_zone * abs(e['up']):.0f} µV 才算上")

@@ -26,8 +26,13 @@ import config
 class EmgGesture:
     """单个肌电通道的手势识别：带滞回的阈值 + 按持续时间分类。"""
 
-    def __init__(self, name, thr_hi, thr_lo, cfg):
+    def __init__(self, name, thr_hi, thr_lo, cfg, rest=None, rate=config.RATE):
         self.name, self.hi, self.lo, self.cfg = name, thr_hi, thr_lo, cfg
+        # 自适应噪声底：静息包络会随电极接触变化（实测从 3 µV 涨到 10 µV），
+        # 阈值至少取 噪声底 × 3，避免噪声变大后连续误触发
+        self.hi0, self.lo0 = thr_hi, thr_lo
+        self.floor = rest if rest is not None else thr_lo / 2
+        self.alpha = 1.0 / (cfg.get("emg_floor_tau", 5.0) * rate)
         self.active = False
         self.t_on = 0.0
         self.peak = 0.0
@@ -41,6 +46,10 @@ class EmgGesture:
     def update(self, t, env):
         """返回事件：None / "short" / "medium" / "long"（长按在达到时长时立即触发，松开不再触发）。"""
         ev = None
+        if not self.active and env < self.hi:
+            self.floor += (env - self.floor) * self.alpha
+            self.hi = max(self.hi0, 3.0 * self.floor)
+            self.lo = max(self.lo0, 2.0 * self.floor)
         if not self.active:
             if env > self.hi and t >= self.cool_until:
                 self.active, self.t_on, self.peak, self.long_fired = True, t, env, False
@@ -73,8 +82,8 @@ class Controller:
         self.base = np.array([e["base_h"], e["base_v"]], float)
         self.amp = {k: float(e[k]) for k in ("right", "left", "up", "down")}
         m = calib["emg"]
-        self.jaw = EmgGesture("jaw", m["jaw_hi"], m["jaw_lo"], self.c)
-        self.brow = EmgGesture("brow", m["brow_hi"], m["brow_lo"], self.c)
+        self.jaw = EmgGesture("jaw", m["jaw_hi"], m["jaw_lo"], self.c, m.get("jaw_rest"), rate)
+        self.brow = EmgGesture("brow", m["brow_hi"], m["brow_lo"], self.c, m.get("brow_rest"), rate)
         # 挑眉不可用时：咬牙 0.6–1 s = 右键；暂停后继续时自动重新居中（继续时请看屏幕中间）
         self.brow_disabled = bool(m.get("brow_disabled", False))
         self.recenter_pending = False
