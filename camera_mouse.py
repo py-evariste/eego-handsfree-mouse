@@ -55,6 +55,8 @@ def beep(freq, ms=120):
 class JawClicks:
     """Clics par EMG des dents (eego), réutilise la calibration et la détection de gestes existantes."""
 
+    WARMUP = 2.0          # s ignorées au démarrage
+
     def __init__(self):
         import calibration
         from controller import EmgGesture
@@ -74,6 +76,8 @@ class JawClicks:
         events = []
         for v in y[:, 2]:
             self.t += 1.0 / config.RATE
+            if self.t < self.WARMUP:
+                continue          # régime transitoire des filtres au démarrage : sinon faux « long » → pause immédiate
             ev = self.jaw.update(self.t, v)
             if ev:
                 events.append(ev)
