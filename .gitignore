@@ -2,3 +2,6 @@ sdk/
 __pycache__/
 *.npz
 calibration.json
+models/
+gaze_model.json
+camera_calib_raw.npz

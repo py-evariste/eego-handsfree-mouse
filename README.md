@@ -161,6 +161,36 @@ Réglables par arguments en ligne de commande ou directement dans `config.py`.
 - **Les clics avec les dents ratent ou se déclenchent seuls** : recalibrer en serrant plus fort. On peut aussi augmenter la valeur `0.35` dans `calibration.py`.
 - **En cas de problème** : conserver `calib_raw.npz` ou un enregistrement fait avec `live_view --save` pour une analyse hors ligne.
 
+## Suivi du regard par webcam (étape 1 : caméra seule)
+
+Objectif : stabiliser le contrôle en ajoutant la webcam. La caméra donne une position **absolue** du regard
+(pas de dérive), l'EOG est rapide mais dérive, l'EMG reste le plus fiable pour cliquer. Cette première étape
+fait fonctionner la caméra seule ; la fusion caméra + EOG viendra ensuite.
+
+Dépendances supplémentaires : `pip install mediapipe opencv-python`
+(le modèle `face_landmarker.task` est téléchargé automatiquement dans `models/` au premier lancement).
+
+| Fichier | Rôle |
+| --- | --- |
+| `camera.py` | Capture webcam + repères MediaPipe (iris inclus) + pose de la tête → caractéristiques ; `python camera.py` ouvre un aperçu |
+| `gaze_model.py` | Régression ridge caractéristiques → coordonnées écran, choix automatique de la régularisation, filtre de lissage « 1 € » |
+| `camera_calibrate.py` | Entraînement plein écran : grille de 9 points × 2 tours + 5 points de validation, rapport d'erreur en pixels |
+| `camera_mouse.py` | Le curseur va là où l'on regarde ; `--clicks` ajoute les clics par serrage des dents (eego) |
+| `test_camera.py` | Tests sans caméra (repères synthétiques, modèle, filtre, analyse d'entraînement) |
+
+Étapes :
+
+```
+python camera.py                    # 1. vérifier que le visage et les iris sont détectés (points verts sur les iris)
+python camera_calibrate.py          # 2. entraîner le modèle : suivre le point des yeux
+python camera_mouse.py --dry-run    # 3. essai : affiche la position estimée
+python camera_mouse.py --clicks     # 4. caméra pour déplacer + dents pour cliquer
+```
+
+Conseils : visage bien éclairé de face (pas de fenêtre derrière soi), caméra à hauteur des yeux,
+même distance et même position que pendant l'entraînement. Si l'on bouge beaucoup ou si l'éclairage change,
+refaire `camera_calibrate.py`. Réglages : `--smooth` (plus petit = plus stable), `--dead-px` (seuil anti-tremblement).
+
 ## Tests (sans matériel)
 
 ```
@@ -168,4 +198,5 @@ python test_pipeline.py          # test automatique
 python live_view.py --sim        # simulation au clavier : flèches = direction du regard, J maintenue = dents, B maintenue = sourcils
 python calibrate.py --sim
 python mouse_control.py --sim --dry-run
+python test_camera.py           # tests du suivi par caméra
 ```

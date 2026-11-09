@@ -163,6 +163,22 @@ Pode ajustar com argumentos na linha de comando ou diretamente em `config.py`.
 - **Os cliques com os dentes falham ou disparam sozinhos**: calibre outra vez e cerre os dentes com mais força. Também pode aumentar o valor `0.35` em `calibration.py`.
 - **Problemas**: guarde `calib_raw.npz` ou uma gravação feita com `live_view --save` para análise offline.
 
+## Seguimento do olhar por webcam (fase 1: só a câmara)
+
+A câmara dá uma posição **absoluta** do olhar (sem deriva); o EOG é rápido mas deriva; o EMG continua a ser o mais fiável para clicar.
+Esta primeira fase põe a câmara a funcionar sozinha; a fusão câmara + EOG vem a seguir.
+
+Dependências adicionais: `pip install mediapipe opencv-python` (o modelo `face_landmarker.task` é descarregado automaticamente para `models/`).
+
+```
+python camera.py                    # 1. verificar que o rosto e as íris são detetados
+python camera_calibrate.py          # 2. treinar o modelo: seguir o ponto com os olhos (9 pontos × 2 voltas + 5 de validação)
+python camera_mouse.py --dry-run    # 3. ensaio: mostra a posição estimada
+python camera_mouse.py --clicks     # 4. câmara para mover + dentes (eego) para clicar
+```
+
+Conselhos: rosto bem iluminado de frente, câmara à altura dos olhos, mesma distância e posição que no treino; se a posição ou a luz mudarem, voltar a treinar.
+
 ## Testes (sem hardware)
 
 ```
