@@ -33,12 +33,13 @@ class EmgGesture:
         self.peak = 0.0
         self.long_fired = False
         self.cool_until = -1.0
+        self.t_off = -1.0
 
     def ratio(self, env):
         return env / self.hi
 
     def update(self, t, env):
-        """返回事件：None / "short" / "long"（长按在达到时长时立即触发，松开不再触发）。"""
+        """返回事件：None / "short" / "medium" / "long"（长按在达到时长时立即触发，松开不再触发）。"""
         ev = None
         if not self.active:
             if env > self.hi and t >= self.cool_until:
@@ -52,8 +53,11 @@ class EmgGesture:
             if env < self.lo:
                 self.active = False
                 self.cool_until = t + self.cfg["refractory"] if (dur >= self.cfg["click_min"]) else t
+                self.t_off = t
                 if not self.long_fired and self.cfg["click_min"] <= dur <= self.cfg["click_max"]:
                     ev = "short"
+                elif not self.long_fired and dur > self.cfg["click_max"]:
+                    ev = "medium"
         return ev
 
 
@@ -71,6 +75,9 @@ class Controller:
         m = calib["emg"]
         self.jaw = EmgGesture("jaw", m["jaw_hi"], m["jaw_lo"], self.c)
         self.brow = EmgGesture("brow", m["brow_hi"], m["brow_lo"], self.c)
+        # 挑眉不可用时：咬牙 0.6–1 s = 右键；暂停后继续时自动重新居中（继续时请看屏幕中间）
+        self.brow_disabled = bool(m.get("brow_disabled", False))
+        self.recenter_pending = False
         self.paused = False
         self.freeze_until = 0.0
         self.v_hold = 0.0                # 垂直偏移已持续时间
@@ -118,14 +125,22 @@ class Controller:
             if ej == "long":
                 self.paused = not self.paused
                 actions.append(("pause", self.paused))
+                if not self.paused and self.brow_disabled:
+                    self.recenter_pending = True
             elif ej == "short" and not self.paused:
                 actions.append(("click", "left"))
+            elif ej == "medium" and not self.paused and self.brow_disabled:
+                actions.append(("click", "right"))
             elif eb == "short" and not self.paused:
                 actions.append(("click", "right"))
             elif eb == "long" and not self.paused:
                 self.recenter()
                 actions.append(("recenter",))
             self.recent.append(block[k, :2])
+            if self.recenter_pending and not self.jaw.active and self.t > self.jaw.t_off + 0.6:
+                self.recenter_pending = False
+                self.recenter()
+                actions.append(("recenter",))
 
         emg_busy = jaw_on_any or brow_on_any or self.jaw.active or self.brow.active
         if emg_busy:

@@ -114,8 +114,13 @@ def analyze(raw, segs, rate=config.RATE):
         cn = "咬牙" if key == "jaw" else "挑眉"
         report.append(f"{cn}肌电：静息 {r:.1f} µV，用力 {a:.1f} µV（{a / max(r, 1e-9):.1f} 倍），阈值 {hi:.1f} µV")
         if a < 3 * r:
-            ok = False
-            report.append(f"  ⚠ {cn}信号和静息差别不大：检查电极位置，{cn}时用力一点")
+            if key == "jaw":
+                ok = False
+                report.append(f"  ⚠ {cn}信号和静息差别不大：检查电极位置，{cn}时用力一点")
+            else:
+                # 挑眉识别不出来时直接禁用，避免低阈值误触发；右键改用“咬牙 0.6–1 秒”
+                emg.update(brow_hi=1e9, brow_lo=1e9, brow_disabled=True)
+                report.append("  ⚠ 挑眉信号太弱，已禁用挑眉；右键改为“咬牙 0.6–1 秒”，重新居中改为暂停后再继续")
 
     # 串扰：咬牙时挑眉通道会不会超过阈值（反之亦然）
     for key, other, och in (("jaw", "brow", 3), ("brow", "jaw", 2)):
