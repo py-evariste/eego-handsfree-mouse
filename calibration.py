@@ -78,7 +78,9 @@ def analyze(raw, segs, rate=config.RATE):
             raise ValueError(f"校准数据里没有“{DIR_CN[d]}”这一段")
         eog[d] = float(np.median(amps[d]))
     rest = [(s, e) for n, s, e in segs if n == "rest"][0]
-    noise = np.std(_core(y[:, :2], *rest, frac=0.8), axis=0)
+    # 稳健噪声估计（中位数绝对偏差），不让休息时的几次眨眼把噪声算大
+    r_seg = _core(y[:, :2], *rest, frac=0.8)
+    noise = 1.4826 * np.median(np.abs(r_seg - np.median(r_seg, axis=0)), axis=0)
     last_center = [(s, e) for n, s, e in segs if n == "center"][-1]
     base = np.median(_core(y[:, :2], *last_center), axis=0)
     eog.update(base_h=float(base[0]), base_v=float(base[1]),
@@ -88,13 +90,26 @@ def analyze(raw, segs, rate=config.RATE):
     for axis, (a, b), nz in (("水平", ("right", "left"), noise[0]), ("垂直", ("up", "down"), noise[1])):
         va, vb = eog[a], eog[b]
         report.append(f"{axis}眼电：{DIR_CN[a]} {va:+.0f} µV，{DIR_CN[b]} {vb:+.0f} µV，静息噪声 {nz:.1f} µV")
-        if np.sign(va) == np.sign(vb):
-            ok = False
-            report.append(f"  ❌ {DIR_CN[a]}和{DIR_CN[b]}的符号相同：电极位置不对，或者校准时眼睛没有跟着点走")
-        for d, v in ((a, va), (b, vb)):
-            if abs(v) < 5 * nz or abs(v) < 20:
-                ok = False
-                report.append(f"  ⚠ 看{DIR_CN[d]}的幅度太小（{v:+.0f} µV）：检查电极是否贴牢、是否只转了眼睛")
+        good = {d: abs(v) >= max(3 * nz, 20) for d, v in ((a, va), (b, vb))}
+        if good[a] and good[b] and np.sign(va) != np.sign(vb):
+            continue
+        ok = False
+        if good[a] and good[b]:
+            # 符号相同：取幅度大的那个为准，另一个按对称处理
+            keep, other = (a, b) if abs(va) >= abs(vb) else (b, a)
+        elif good[a] or good[b]:
+            keep, other = (a, b) if good[a] else (b, a)
+        else:
+            keep = other = None
+        if keep:
+            eog[other] = -eog[keep]
+            report.append(f"  ⚠ 看{DIR_CN[other]}没测好，按对称处理：{DIR_CN[other]} = {eog[other]:+.0f} µV（以{DIR_CN[keep]}为准）")
+        else:
+            default = 200.0
+            eog[a], eog[b] = default, -default
+            report.append(f"  ❌ {axis}两个方向都没测好，暂用默认 ±{default:.0f} µV；"
+                          f"可以用 mouse_control.py 的 --{a}-uv / --{b}-uv 手动指定阈值幅度")
+        eog[f"{axis}_fallback"] = True
 
     # ---------- 肌电 ----------
     emg = {}
