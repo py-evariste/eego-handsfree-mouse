@@ -55,6 +55,7 @@ def main():
         ax.grid(alpha=0.3)
         lines.append(ln)
     axes[-1].set_xlabel("时间 (s)")
+    axes[-1].set_xlim(-args.seconds, 0)
     fig.tight_layout()
     status = fig.text(0.99, 0.995, "", ha="right", va="top", fontsize=9)
 
@@ -77,7 +78,13 @@ def main():
                     ax.set_ylim(c - r, c + r)
                 else:
                     ax.set_ylim(0, max(20, np.percentile(v, 99.5) * 1.2))
-        status.set_text(f"已收 {src.total} 样本   丢样 {src.dropped}")
+        last = buf[-rate:]
+        if not np.isnan(last).any():
+            status.set_text(f"最近 1 秒：HEOG 直流 {last[:, 0].mean() / 1000:.0f} mV   VEOG 直流 {last[:, 1].mean() / 1000:.0f} mV   "
+                            f"咬牙包络 {np.median(last[:, 2]):.0f} µV   挑眉包络 {np.median(last[:, 3]):.0f} µV   "
+                            f"已收 {src.total} 样本   丢样 {src.dropped}")
+        else:
+            status.set_text(f"已收 {src.total} 样本   丢样 {src.dropped}")
         return lines
 
     anim = FuncAnimation(fig, update, interval=50, cache_frame_data=False)  # noqa: F841
