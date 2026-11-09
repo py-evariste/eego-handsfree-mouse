@@ -1,171 +1,171 @@
-# eego 免手鼠标（EOG + EMG）
+# Souris mains libres avec eego (EOG + EMG)
 
-**中文** | [Português](README.pt.md)
+**Français** | [Português](README.pt.md)
 
-用 eemagine eego EE-410（8 通道双极放大器）和 XE-293 按扣电极，做一个不用手的鼠标：
+Une souris pilotée sans les mains, avec l'amplificateur eemagine eego EE-410 (8 voies bipolaires) et les électrodes à pression XE-293 :
 
-- 眼动（EOG）控制光标移动。
-- 面部肌电（EMG）控制点击：咬牙是左键，挑眉是右键。
+- Les mouvements des yeux (EOG) déplacent le curseur.
+- L'activité musculaire du visage (EMG) fait les clics : serrer les dents = clic gauche, lever les sourcils = clic droit.
 
-## 文件
+## Fichiers
 
-| 文件 | 作用 |
+| Fichier | Rôle |
 | --- | --- |
-| `config.py` | 所有参数：通道分配、采样率、滤波、速度、手势时长。电极接法写在文件开头 |
-| `eego.py` | 用 ctypes 封装 eego SDK 1.3.19 的 DLL，让 Python 直接取数据 |
-| `source.py` | 数据源：真实放大器 `EegoSource`，以及键盘模拟器 `SimSource` |
-| `dsp.py` | 实时滤波：眼电做 10 Hz 低通；肌电做 30–200 Hz 带通，再取 RMS 包络；并陷掉 50 Hz 工频及其谐波（100/150/200 Hz） |
-| `check_device.py` | 设备自检：型号、固件、通道类型、阻抗、数据质量、丢样 |
-| `live_view.py` | 实时波形，贴电极时看信号用，可以顺便录数据 |
-| `calibrate.py` + `calibration.py` | 全屏引导校准（约 1.5 分钟），生成 `calibration.json` |
-| `controller.py` | 控制逻辑：眼电到光标、肌电到手势。纯计算，可以单独测试 |
-| `mouse_control.py` | 主程序 |
-| `test_pipeline.py` | 不需要硬件的端到端测试（模拟数据：校准、移动、点击、暂停、眨眼过滤） |
+| `config.py` | Tous les paramètres : affectation des voies, fréquence d'échantillonnage, filtres, vitesse, durée des gestes. Le montage des électrodes est décrit en tête du fichier |
+| `eego.py` | Interface ctypes vers la DLL du eego SDK 1.3.19, pour lire les données directement en Python |
+| `source.py` | Sources de données : l'amplificateur réel `EegoSource` et le simulateur au clavier `SimSource` |
+| `dsp.py` | Filtrage temps réel : EOG passe-bas 10 Hz ; EMG passe-bande 30–200 Hz puis enveloppe RMS ; coupe-bande 50 Hz et harmoniques (100/150/200 Hz) |
+| `check_device.py` | Autotest de l'appareil : modèle, firmware, type de voies, impédance, qualité du signal, échantillons perdus |
+| `live_view.py` | Visualisation du signal en temps réel, pour vérifier les électrodes ; peut aussi enregistrer les données |
+| `calibrate.py` + `calibration.py` | Calibration guidée en plein écran (environ 1 min 30), génère `calibration.json` |
+| `controller.py` | Logique de contrôle : EOG → curseur, EMG → gestes. Calcul pur, testable séparément |
+| `mouse_control.py` | Programme principal |
+| `test_pipeline.py` | Test de bout en bout sans matériel (données simulées : calibration, déplacement, clics, pause, rejet des clignements) |
 
-依赖：`pip install numpy scipy matplotlib`（tkinter 是 Python 自带的）。
+Dépendances : `pip install numpy scipy matplotlib` (tkinter est fourni avec Python).
 
 ---
 
-## 上机步骤
+## Étapes avec l'appareil
 
-### 0. 准备 SDK（只做一次）
+### 0. Préparer le SDK (une seule fois)
 
-E 盘里**已经解压好的那个文件夹是坏的**：64 位 DLL 只有 352 KB，完整的是 639 KB，驱动文件也被截断了。
-要从 zip 重新解压：
+Le dossier du SDK déjà décompressé qui se trouvait sur la clé USB **est corrompu** : la DLL 64 bits ne fait que 352 Ko (la version complète fait 639 Ko) et les fichiers du pilote sont tronqués aussi.
+Il faut décompresser à nouveau depuis le zip :
 
-1. 在本目录新建 `sdk` 文件夹，把 `E:\eego-SDK-1.3.19.40453.zip` 的内容解压进去（zip 里直接是 `eemagine`、`linux`、`windows` 三个文件夹）。
-2. 确认能找到 `sdk\windows\64bit\eego-SDK.dll`，大小约 639 KB。
+1. Créer un dossier `sdk` dans ce répertoire et y décompresser le contenu de `eego-SDK-1.3.19.40453.zip` (le zip contient directement les dossiers `eemagine`, `linux` et `windows`).
+2. Vérifier que `sdk\windows\64bit\eego-SDK.dll` existe et fait environ 639 Ko.
 
-### 1. 装驱动（只做一次）
+### 1. Installer le pilote (une seule fois)
 
-1. 插上放大器，打开设备管理器，找到带黄色感叹号的未知设备。
-2. 右键 → 更新驱动程序 → 浏览我的电脑 → 选 `sdk\windows\driver\win8\x64`。Windows 10/11 也用 win8 这份。
-3. **Windows 11 上驱动会被拦截**（设备管理器显示代码 39“应用程序控制策略已阻止此文件”）：
-   这个 2017 年的 Cypress 驱动用的是旧式交叉签名，新版 Windows 11 不再信任。关内存完整性、阻止列表都**没用**。
-   能用的办法是每次开机临时禁用驱动签名强制：按住 Shift 点“重启” → 疑难解答 → 高级选项 → 启动设置 → 重启 → 按 **7**。
-   只对这一次开机有效，重启后要再来一遍。
+1. Brancher l'amplificateur, ouvrir le Gestionnaire de périphériques et trouver le périphérique inconnu avec le point d'exclamation jaune.
+2. Clic droit → Mettre à jour le pilote → Parcourir mon poste de travail → choisir `sdk\windows\driver\win8\x64`. Sous Windows 10/11 on utilise aussi cette version win8.
+3. **Sous Windows 11 le pilote est bloqué** (le Gestionnaire de périphériques affiche le code 39, « une stratégie de contrôle d'application a bloqué ce fichier ») :
+   ce pilote Cypress de 2017 utilise l'ancienne signature croisée (cross-signing), à laquelle les versions récentes de Windows 11 ne font plus confiance. Désactiver l'intégrité de la mémoire ou la liste de blocage des pilotes **ne sert à rien**.
+   La solution qui fonctionne est de désactiver temporairement le contrôle obligatoire des signatures de pilotes à chaque démarrage : maintenir Maj et cliquer sur « Redémarrer » → Dépannage → Options avancées → Paramètres → Redémarrer → appuyer sur **7**.
+   Valable uniquement pour ce démarrage ; il faut recommencer après chaque redémarrage.
 
-### 2. 设备自检（不用贴电极）
+### 2. Autotest de l'appareil (sans électrodes)
 
 ```
 python check_device.py --no-impedance
 ```
 
-重点看下面三项：
+Vérifier trois points :
 
-- **固件版本**：SDK 1.3.19 只支持 011700、011800 和 012000–020000。
-- **通道类型**：8 个通道应该是 `bipolar`。
-- **sample_counter**：结果应该是“不连续 0 处”。
+- **Version du firmware** : le SDK 1.3.19 ne gère que 011700, 011800 et 012000–020000.
+- **Type de voies** : les 8 voies doivent apparaître comme `bipolar`.
+- **sample_counter** : doit indiquer 0 discontinuité.
 
-### 3. 贴电极
+### 3. Poser les électrodes
 
-先用酒精棉擦皮肤，再贴一次性心电电极片，最后把按扣扣上。红色是 +，黑色是 −。
-**电极片必须是新的、凝胶湿润的**，GND 一定要接好，并用胶带压住电极片、固定导线。
-旧电极片或 GND 接触不好时，直流会漂几百 mV、肌电噪声几百 µV，根本没法用；接触良好时直流在几十 mV 以内、肌电静息 3–6 µV。
+Nettoyer la peau à l'alcool, coller les électrodes jetables d'ECG, puis clipser les connecteurs à pression. Rouge = +, noir = −.
+**Les électrodes doivent être neuves, avec un gel humide** ; la masse (GND) doit être bien en contact. Maintenir les électrodes et les câbles avec du ruban adhésif.
+Avec des électrodes usagées ou un mauvais contact de la masse, la composante continue dérive de plusieurs centaines de mV et le bruit EMG atteint plusieurs centaines de µV : le signal est inutilisable. Avec un bon contact, la composante continue reste sous quelques dizaines de mV et l'EMG au repos est à 3–6 µV.
 
-**默认是 5 片模式**（`config.py` 里 `LAYOUT = "5pads"`）：只贴通道 1、2 和 GND，
-咬牙/挑眉肌电直接从通道 1、2 的高频部分提取。
+**Par défaut, montage à 5 électrodes** (`LAYOUT = "5pads"` dans `config.py`) : seulement les voies 1, 2 et GND.
+L'EMG des dents et des sourcils est extrait de la partie haute fréquence des voies 1 et 2.
 
-| XE-293 标签 | 用途 | 红（+） | 黑（−） |
+| Étiquette XE-293 | Rôle | Rouge (+) | Noir (−) |
 | --- | --- | --- | --- |
-| 1 | 水平眼电 + 咬牙肌电 | 右眼外眼角外侧 1 cm | 左眼外眼角外侧 1 cm |
-| 2 | 垂直眼电 + 挑眉肌电 | 左眉正上方 1 cm | 左眼眶下方的颧骨上缘 |
-| GND | 地 | 额头正中 | |
-| 3–8 | 不用 | 用胶带包好，别碰金属 | |
+| 1 | EOG horizontal + EMG des dents | 1 cm à l'extérieur du coin externe de l'œil droit | 1 cm à l'extérieur du coin externe de l'œil gauche |
+| 2 | EOG vertical + EMG des sourcils | 1 cm au-dessus du sourcil gauche | Sur le bord supérieur de la pommette, sous l'orbite gauche |
+| GND | Masse | Milieu du front | |
+| 3–8 | Inutilisées | Isoler avec du ruban adhésif, sans contact avec du métal | |
 
-电极片够的话可以用 9 片模式（运行前 `set EEGO_LAYOUT=9pads`），通道 3、4 单独贴：
+Si l'on a assez d'électrodes, on peut utiliser le montage à 9 électrodes (avant de lancer : `set EEGO_LAYOUT=9pads`), avec les voies 3 et 4 posées séparément :
 
-| XE-293 标签 | 用途 | 红（+） | 黑（−） |
+| Étiquette XE-293 | Rôle | Rouge (+) | Noir (−) |
 | --- | --- | --- | --- |
-| 1 | 水平眼电 | 右眼外眼角外侧 1 cm | 左眼外眼角外侧 1 cm |
-| 2 | 垂直眼电 | 左眉正上方 1 cm | 左下眼睑正下方 1 cm |
-| 3 | 咬牙肌电 | 左脸咬肌（咬牙时鼓起处） | 同一块肌肉上，距红色 2 cm |
-| 4 | 挑眉肌电 | 右眉上方 2–3 cm 的额头 | 同高度，距红色 2 cm |
-| GND | 地 | 额头正中 | |
-| 5–8 | 不用 | 每对红黑并排贴在耳后乳突附近 | |
+| 1 | EOG horizontal | 1 cm à l'extérieur du coin externe de l'œil droit | 1 cm à l'extérieur du coin externe de l'œil gauche |
+| 2 | EOG vertical | 1 cm au-dessus du sourcil gauche | Juste sous la paupière inférieure gauche |
+| 3 | EMG des dents | Masséter gauche (là où il gonfle quand on serre les dents) | Sur le même muscle, à 2 cm du rouge |
+| 4 | EMG des sourcils | Front, 2–3 cm au-dessus du sourcil droit | À la même hauteur, à 2 cm du rouge |
+| GND | Masse | Milieu du front | |
+| 5–8 | Inutilisées | Chaque paire côte à côte derrière l'oreille (mastoïde) | |
 
-如果电极接到了别的通道，改 `config.py` 里的 `CHANNELS` 就行。
+Si les électrodes sont branchées sur d'autres voies, il suffit de modifier `CHANNELS` dans `config.py`.
 
-### 4. 看信号
+### 4. Visualiser le signal
 
 ```
 python live_view.py
 ```
 
-依次做下面的动作，确认对应波形有反应：
+Faire les mouvements suivants et vérifier que la courbe correspondante réagit :
 
-- 看右，再看左：第 1 行应该上下明显跳动。
-- 看上，再看下：第 2 行应该上下明显跳动。
-- 眨眼：第 2 行应该出现尖峰。
-- 咬牙：第 3 行应该明显抬高。
-- 挑眉：第 4 行应该明显抬高。
+- Regarder à droite puis à gauche : la ligne 1 monte et descend nettement.
+- Regarder en haut puis en bas : la ligne 2 monte et descend nettement.
+- Cligner des yeux : un pic apparaît sur la ligne 2.
+- Serrer les dents : la ligne 3 monte nettement.
+- Lever les sourcils : la ligne 4 monte nettement.
 
-想把这段数据录下来，加 `--save test1.npz`。
+Pour enregistrer ces données, ajouter `--save test1.npz`.
 
-### 5. 校准
+### 5. Calibration
 
 ```
 python calibrate.py
 ```
 
-按屏幕提示做：
+Suivre les consignes à l'écran :
 
-1. **只转眼睛看红点，头不要动。**
-2. 看到橙色提示时咬牙。
-3. 看到蓝色提示时挑眉。
+1. **Bouger seulement les yeux pour suivre le point rouge ; ne pas bouger la tête.**
+2. Quand la consigne devient orange, serrer les dents.
+3. Quand la consigne devient bleue, lever les sourcils.
 
-结束后会显示每一项的幅度和是否通过。如果没通过，按提示调整电极，再校准一次。
+À la fin, l'amplitude de chaque mouvement s'affiche avec le verdict. En cas d'échec, ajuster les électrodes selon les remarques et recalibrer.
 
-### 6. 先演习，再真控制
+### 6. D'abord un essai, puis le contrôle réel
 
-演习模式：程序只打印动作，不会真的动鼠标。
+Mode essai : le programme affiche seulement les actions, sans bouger la souris.
 
 ```
 python mouse_control.py --dry-run
 ```
 
-演习正常后，开始真正控制鼠标：
+Quand l'essai est concluant, passer au contrôle réel :
 
 ```
 python mouse_control.py
 ```
 
-启动时先看屏幕中间 2 秒，等程序建立基线，听到“嘀”一声后开始。
+Au démarrage, regarder le centre de l'écran pendant 2 secondes pendant que le programme mesure la ligne de base ; après le bip, on peut commencer.
 
-| 动作 | 效果 |
+| Action | Effet |
 | --- | --- |
-| 眼睛往左、右、上、下偏 | 光标往那个方向持续移动，偏得越多越快；看回中间就停 |
-| 咬牙一下（0.1–0.6 s） | 左键单击（快速两下就是双击） |
-| 咬牙 1 秒以上 | 暂停 / 继续（低音表示暂停，高音表示继续） |
-| 挑眉一下 | 右键单击 |
-| 看屏幕中间，同时挑眉 1 秒 | 重新居中（基线漂了、光标自己慢慢跑的时候用） |
-| 键盘 F8 / Esc | 暂停 / 退出（给旁边的人用的保险） |
+| Décaler le regard à gauche, à droite, en haut ou en bas | Le curseur avance en continu dans cette direction, d'autant plus vite que l'écart est grand ; il s'arrête quand on regarde à nouveau le centre |
+| Serrer les dents une fois (0,1–0,6 s) | Clic gauche (deux fois rapidement = double-clic) |
+| Serrer les dents plus d'1 s | Pause / reprise (son grave = pause, son aigu = reprise) |
+| Lever les sourcils une fois | Clic droit |
+| Regarder le centre de l'écran et lever les sourcils pendant 1 s | Recentrage (quand la ligne de base a dérivé et que le curseur bouge tout seul) |
+| Touches F8 / Échap | Pause / quitter (sécurité pour la personne à côté) |
 
-想换成“看哪儿光标去哪儿”，加 `--mode absolute`。这个模式要经常重新居中。
+Pour le mode « le curseur va là où l'on regarde », ajouter `--mode absolute`. Ce mode doit être recentré souvent.
 
-### 实测经验（2026-11-09 第一次上机）
+### Retour d'expérience (premier essai avec l'appareil, 9/11/2026)
 
-- 5 片模式下挑眉不稳定，建议加 `--no-brow`：右键改成“咬牙 0.6–1 秒”。
-- 咬牙/挑眉会扯动眼周皮肤，眼电直流跳几 mV，所以程序在每次面部动作结束后会**自动重新居中**。
-- 校准测出来的左右可能反、上下幅度可能偏小，可以直接手动指定（单位 µV，带正负号），例如：
+- En montage à 5 électrodes, le geste des sourcils est peu fiable ; on conseille `--no-brow` : le clic droit devient « serrer les dents 0,6–1 s ».
+- Serrer les dents ou lever les sourcils tire la peau autour des yeux et fait sauter la composante continue de l'EOG de plusieurs mV ; le programme **se recentre donc automatiquement** à la fin de chaque geste facial.
+- La calibration peut inverser la gauche et la droite ou mesurer des amplitudes verticales trop faibles. On peut les fixer à la main (en µV, avec le signe), par exemple :
   `python mouse_control.py --no-brow --right-uv 300 --left-uv -300 --up-uv 150 --down-uv -120`
-  数值越小越灵敏；方向反了就把正负号对调。也可以直接改 `calibration.json` 里 `eog` 的这四个值。
+  Plus la valeur est petite, plus c'est sensible ; si une direction est inversée, changer le signe. On peut aussi modifier directement ces quatre valeurs dans la section `eog` de `calibration.json`.
 
-### 常见调整
+### Réglages courants
 
-调参数可以加命令行参数，也可以直接改 `config.py`。
+Réglables par arguments en ligne de commande ou directement dans `config.py`.
 
-- **光标太快或太慢**：用 `--speed 500`（单位：像素/秒）。
-- **眼睛稍微动一下光标就跑**：调大死区，例如 `--dead-zone 0.5`。
-- **偏得很多光标才动**：调小死区，例如 `--dead-zone 0.25`。
-- **咬牙经常被误判**：重新校准，并且咬得更用力。也可以在 `calibration.py` 里把 `0.35` 调大。
-- **出现问题**：把 `calib_raw.npz`，或者用 `live_view --save` 录的数据发给我，我离线分析。
+- **Curseur trop rapide ou trop lent** : `--speed 500` (en pixels par seconde).
+- **Le curseur bouge au moindre mouvement des yeux** : agrandir la zone morte, par exemple `--dead-zone 0.5`.
+- **Il faut beaucoup décaler le regard pour que le curseur bouge** : réduire la zone morte, par exemple `--dead-zone 0.25`.
+- **Les clics avec les dents ratent ou se déclenchent seuls** : recalibrer en serrant plus fort. On peut aussi augmenter la valeur `0.35` dans `calibration.py`.
+- **En cas de problème** : conserver `calib_raw.npz` ou un enregistrement fait avec `live_view --save` pour une analyse hors ligne.
 
-## 测试（无硬件）
+## Tests (sans matériel)
 
 ```
-python test_pipeline.py          # 自动测试
-python live_view.py --sim        # 键盘模拟：方向键=看方向，按住 J=咬牙，按住 B=挑眉
+python test_pipeline.py          # test automatique
+python live_view.py --sim        # simulation au clavier : flèches = direction du regard, J maintenue = dents, B maintenue = sourcils
 python calibrate.py --sim
 python mouse_control.py --sim --dry-run
 ```
