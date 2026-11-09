@@ -1,5 +1,7 @@
 # eego 免手鼠标（EOG + EMG）
 
+**中文** | [Português](README.pt.md)
+
 用 eemagine eego EE-410（8 通道双极放大器）和 XE-293 按扣电极，做一个不用手的鼠标：
 
 - 眼动（EOG）控制光标移动。
@@ -12,7 +14,7 @@
 | `config.py` | 所有参数：通道分配、采样率、滤波、速度、手势时长。电极接法写在文件开头 |
 | `eego.py` | 用 ctypes 封装 eego SDK 1.3.19 的 DLL，让 Python 直接取数据 |
 | `source.py` | 数据源：真实放大器 `EegoSource`，以及键盘模拟器 `SimSource` |
-| `dsp.py` | 实时滤波：眼电做 10 Hz 低通；肌电做 30–200 Hz 带通，再取 RMS 包络；两者都做 50 Hz 陷波 |
+| `dsp.py` | 实时滤波：眼电做 10 Hz 低通；肌电做 30–200 Hz 带通，再取 RMS 包络；并陷掉 50 Hz 工频及其谐波（100/150/200 Hz） |
 | `check_device.py` | 设备自检：型号、固件、通道类型、阻抗、数据质量、丢样 |
 | `live_view.py` | 实时波形，贴电极时看信号用，可以顺便录数据 |
 | `calibrate.py` + `calibration.py` | 全屏引导校准（约 1.5 分钟），生成 `calibration.json` |
