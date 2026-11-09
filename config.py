@@ -49,7 +49,8 @@ CONTROL = {
     "speed_exponent": 1.6,     # 速度曲线，越大小偏移越慢、越容易精细定位
     "vertical_hold": 0.30,     # s，垂直偏移要持续这么久才算（过滤眨眼）
     "absolute_smoothing": 0.15,  # s，绝对模式光标平滑时间常数
-    "baseline_tau": 8.0,       # s，眼睛在中间时基线跟随漂移的时间常数
+    "baseline_tau": 3.0,       # s，眼睛在中间时基线跟随漂移的时间常数
+    "baseline_tau_out": 15.0,  # s，眼睛偏在一边时基线跟随的时间常数（更慢）
     "loop_dt": 0.02,           # s，控制循环周期
 
     # 肌电手势（时长单位 s）

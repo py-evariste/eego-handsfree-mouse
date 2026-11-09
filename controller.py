@@ -122,6 +122,10 @@ class Controller:
                 ej = None
             if eb and self.jaw.active and self.jaw.peak / self.jaw.hi > self.brow.peak / self.brow.hi:
                 eb = None
+            if (ej or eb) and self.c["mode"] == "joystick":
+                # 做完任何面部动作后自动重新居中：
+                # 5 片模式下咬牙/挑眉会牵动眼电电极的皮肤，直流电位跳几 mV，比眼动信号大得多
+                self.recenter_pending = True
             if ej == "long":
                 self.paused = not self.paused
                 actions.append(("pause", self.paused))
@@ -137,7 +141,8 @@ class Controller:
                 self.recenter()
                 actions.append(("recenter",))
             self.recent.append(block[k, :2])
-            if self.recenter_pending and not self.jaw.active and self.t > self.jaw.t_off + 0.6:
+            if (self.recenter_pending and not self.jaw.active and not self.brow.active
+                    and self.t > max(self.jaw.t_off, self.brow.t_off) + 0.6):
                 self.recenter_pending = False
                 self.recenter()
                 actions.append(("recenter",))
@@ -165,10 +170,10 @@ class Controller:
             yy = ym if self.v_hold >= self.c["vertical_hold"] else 0.0
             vx = self._speed(x)
             vy = self._speed(yy)
-            if abs(x) < dz * 0.7 and abs(y) < dz * 0.7:
-                # 眼睛在中间：基线慢慢跟随漂移
-                a = dt_block / self.c["baseline_tau"]
-                self.base += (np.array([h_now, v_now]) - self.base) * a
+            # 基线跟随漂移：眼睛在中间时快一些，偏在一边时很慢（防止长时间漂移后再也回不到死区）
+            centered = abs(x) < dz * 0.7 and abs(y) < dz * 0.7
+            tau = self.c["baseline_tau"] if centered else self.c["baseline_tau_out"]
+            self.base += (np.array([h_med, v_med]) - self.base) * min(1.0, dt_block / tau)
             move = np.array([vx, -vy]) * dt_block + self.frac
         else:
             # 绝对模式：注视点 → 屏幕坐标，水平用当前值，垂直用中值（去眨眼）

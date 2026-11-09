@@ -115,6 +115,7 @@ def main():
         print("开始控制。")
 
         last_print = 0.0
+        moved = np.zeros(2)
         while True:
             time.sleep(config.CONTROL["loop_dt"])
             if key_pressed(VK_ESCAPE):
@@ -128,6 +129,7 @@ def main():
             for act in ctl.step(y):
                 kind = act[0]
                 if kind == "move":
+                    moved += act[1:]
                     if not args.dry_run:
                         move_mouse(act[1], act[2], W, H)
                 else:
@@ -146,8 +148,10 @@ def main():
                 br = y[-1, 3] / ctl.brow.hi
                 bar = lambda v: "#" * int(min(v, 2) * 10)
                 state = "暂停" if ctl.paused else "控制"
+                arrow = ("←" if moved[0] < -3 else "→" if moved[0] > 3 else " ") +                         ("↑" if moved[1] < -3 else "↓" if moved[1] > 3 else " ")
+                moved[:] = 0
                 drop = f" 丢样 {src.dropped}" if src.dropped else ""
-                print(f"\r[{state}] 眼 x {gx:+.2f} y {gy:+.2f} | 咬牙 {bar(j):<20s} | 挑眉 {bar(br):<20s}{drop}   ",
+                print(f"\r[{state}] 光标 {arrow} | 眼 x {gx:+.2f} y {gy:+.2f} | 咬牙 {bar(j):<20s} | 挑眉 {bar(br):<20s}{drop}   ",
                       end="", flush=True)
 
 
