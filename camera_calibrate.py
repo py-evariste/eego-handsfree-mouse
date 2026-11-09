@@ -4,6 +4,7 @@ Entraînement du modèle de regard caméra (plein écran, environ 1 minute).
     python camera_calibrate.py               # 9 points × 2 tours + 5 points de validation
     python camera_calibrate.py --rounds 3    # plus de répétitions = modèle plus stable
     python camera_calibrate.py --index 1     # autre caméra
+    python camera_calibrate.py --refit       # réajuste le modèle à partir du dernier entraînement enregistré
 
 Consignes : asseyez-vous à votre distance habituelle, visage bien éclairé et face à la caméra.
 Suivez le point avec les yeux (vous pouvez bouger un peu la tête naturellement, mais restez à la même place).
@@ -177,7 +178,16 @@ def main():
     ap.add_argument("--index", type=int, default=0, help="numéro de la caméra")
     ap.add_argument("--rounds", type=int, default=2, help="nombre de tours sur la grille de 9 points")
     ap.add_argument("--valid", type=int, default=5, help="nombre de points de validation")
+    ap.add_argument("--refit", action="store_true", help="réajuster à partir de camera_calib_raw.npz, sans caméra")
     args = ap.parse_args()
+    if args.refit:
+        d = np.load(HERE / "camera_calib_raw.npz")
+        names = [str(n) for n in d["features"]]
+        samples = [(str(ph), int(g), float(xy[0]), float(xy[1]), dict(zip(names, f), open=float(o)))
+                   for ph, g, xy, f, o in zip(d["phase"], d["group"], d["XY"], d["F"], d["open"])]
+        analyze.pairs = []
+        print("\n".join(analyze(samples, tuple(int(v) for v in d["screen"]))))
+        return
     with CameraGaze(args.index) as cam:
         t_end = time.time() + 5
         while cam.latest()[0] is None and time.time() < t_end:

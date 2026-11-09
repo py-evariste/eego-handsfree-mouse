@@ -1,10 +1,14 @@
 """
 Modèle regard caméra → coordonnées écran, et filtre de lissage.
 
-GazeModel : régression ridge sur des caractéristiques standardisées
+GazeModel : régression ridge
     entrées : hx, vy (iris dans l'œil), pose de la tête (yaw, pitch, roll, tx, ty, tz),
               plus les termes quadratiques hx², vy², hx·vy (l'œil est une sphère : la relation n'est pas linéaire)
     sorties : x, y écran en pixels
+    Les termes de l'œil sont standardisés sur les données. Les termes de la tête sont mis à une échelle
+    physique fixe (10°, 5 cm), fortement pénalisés et bornés à ±3 : pendant l'entraînement la tête bouge
+    très peu, et une standardisation sur les données amplifierait énormément le moindre changement de posture
+    (constaté au premier essai : la prédiction partait dans un coin de l'écran).
 OneEuro : filtre « 1 € » (Casiez et al.) — lisse fortement quand le regard est stable,
           suit vite quand il bouge : bon compromis tremblement / latence pour le regard.
 """
@@ -24,27 +28,39 @@ def design(F):
     return np.column_stack([F, hx ** 2, vy ** 2, hx * vy])
 
 
+EYE_COLS = [0, 1, 8, 9, 10]                       # hx, vy, hx², vy², hx·vy
+HEAD_COLS = [2, 3, 4, 5, 6, 7]                    # yaw, pitch, roll, tx, ty, tz
+HEAD_SCALE = np.array([10.0, 10.0, 10.0, 5.0, 5.0, 5.0])   # degrés, degrés, degrés, cm, cm, cm
+HEAD_PENALTY = 30.0                               # pénalité relative des termes de la tête
+HEAD_CLIP = 3.0                                   # écart maximal pris en compte (en unités d'échelle)
+
+
 class GazeModel:
     def __init__(self, alpha=1.0):
         self.alpha = alpha
         self.mu = self.sd = self.W = None
         self.screen = None
 
+    def _z(self, X):
+        Z = (X - self.mu) / self.sd
+        Z[:, HEAD_COLS] = np.clip(Z[:, HEAD_COLS], -HEAD_CLIP, HEAD_CLIP)
+        return np.column_stack([np.ones(len(X)), Z])
+
     def fit(self, F, XY, screen=None):
         X = design(F)
         self.mu = X.mean(axis=0)
         self.sd = X.std(axis=0) + 1e-9
-        Z = np.column_stack([np.ones(len(X)), (X - self.mu) / self.sd])
-        reg = self.alpha * np.eye(Z.shape[1])
-        reg[0, 0] = 0.0                       # pas de pénalité sur la constante
-        self.W = np.linalg.solve(Z.T @ Z + reg, Z.T @ np.asarray(XY, dtype=float))
+        self.sd[HEAD_COLS] = HEAD_SCALE
+        Z = self._z(X)
+        pen = np.full(Z.shape[1], float(self.alpha))
+        pen[0] = 0.0                                          # pas de pénalité sur la constante
+        pen[1 + np.array(HEAD_COLS)] *= HEAD_PENALTY
+        self.W = np.linalg.solve(Z.T @ Z + np.diag(pen), Z.T @ np.asarray(XY, dtype=float))
         self.screen = screen
         return self
 
     def predict(self, F):
-        X = design(F)
-        Z = np.column_stack([np.ones(len(X)), (X - self.mu) / self.sd])
-        return Z @ self.W
+        return self._z(design(F)) @ self.W
 
     def to_dict(self):
         return {"alpha": self.alpha, "mu": self.mu.tolist(), "sd": self.sd.tolist(),
