@@ -2,7 +2,8 @@
 Modèle regard caméra → coordonnées écran, et filtre de lissage.
 
 GazeModel : régression ridge
-    entrées : hx, vy (iris dans l'œil), pose de la tête (yaw, pitch, roll, tx, ty, tz),
+    entrées : hx, vy (iris dans l'œil), open (ouverture des yeux, indice vertical),
+              pose de la tête (yaw, pitch, roll, tx, ty, tz),
               plus les termes quadratiques hx², vy², hx·vy (l'œil est une sphère : la relation n'est pas linéaire)
     sorties : x, y écran en pixels
     Les termes de l'œil sont standardisés sur les données. Les termes de la tête sont mis à une échelle
@@ -22,14 +23,15 @@ from camera import FEATURES
 
 
 def design(F):
-    """F : (n, 8) dans l'ordre de camera.FEATURES → matrice de régression (n, 11)."""
+    """F : (n, 9) dans l'ordre de camera.FEATURES → matrice de régression (n, 12) :
+    [hx, vy, open, hx², vy², hx·vy, yaw, pitch, roll, tx, ty, tz]"""
     F = np.atleast_2d(np.asarray(F, dtype=float))
-    hx, vy = F[:, 0], F[:, 1]
-    return np.column_stack([F, hx ** 2, vy ** 2, hx * vy])
+    hx, vy, op = F[:, 0], F[:, 1], F[:, 2]
+    return np.column_stack([hx, vy, op, hx ** 2, vy ** 2, hx * vy, F[:, 3:9]])
 
 
-EYE_COLS = [0, 1, 8, 9, 10]                       # hx, vy, hx², vy², hx·vy
-HEAD_COLS = [2, 3, 4, 5, 6, 7]                    # yaw, pitch, roll, tx, ty, tz
+EYE_COLS = [0, 1, 2, 3, 4, 5]                     # hx, vy, open, hx², vy², hx·vy
+HEAD_COLS = [6, 7, 8, 9, 10, 11]                  # yaw, pitch, roll, tx, ty, tz
 HEAD_SCALE = np.array([10.0, 10.0, 10.0, 5.0, 5.0, 5.0])   # degrés, degrés, degrés, cm, cm, cm
 HEAD_PENALTY = 30.0                               # pénalité relative des termes de la tête
 HEAD_CLIP = 3.0                                   # écart maximal pris en compte (en unités d'échelle)
@@ -40,6 +42,7 @@ class GazeModel:
         self.alpha = alpha
         self.mu = self.sd = self.W = None
         self.screen = None
+        self.features = FEATURES
 
     def _z(self, X):
         Z = (X - self.mu) / self.sd
@@ -71,6 +74,7 @@ class GazeModel:
         m = cls(d["alpha"])
         m.mu, m.sd, m.W = np.array(d["mu"]), np.array(d["sd"]), np.array(d["W"])
         m.screen = d.get("screen")
+        m.features = d.get("features")
         return m
 
     def save(self, path, extra=None):

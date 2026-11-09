@@ -28,7 +28,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
 
 import config
-from camera import CameraGaze, vector
+from camera import FEATURES, CameraGaze, vector
 from camera_calibrate import MODEL_FILE
 from gaze_model import GazeModel, OneEuro
 
@@ -98,6 +98,9 @@ def main():
         model = GazeModel.load(MODEL_FILE)
     except FileNotFoundError:
         print("❌ gaze_model.json introuvable : lancer d'abord python camera_calibrate.py")
+        return
+    if model.features != FEATURES:
+        print("❌ gaze_model.json vient d'une ancienne version : relancer python camera_calibrate.py")
         return
     W, H = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
     if model.screen and list(model.screen) != [W, H]:

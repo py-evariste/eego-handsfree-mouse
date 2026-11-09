@@ -60,7 +60,8 @@ def simulate(points, n_per=30, rng=None, noise=0.004):
             ex, ey = ax - yaw, ay - pitch                            # rotation de l'œil dans l'orbite
             hx = 0.5 + 0.25 * np.sin(np.radians(ex)) + rng.normal(0, noise)
             vy = 0.20 * np.sin(np.radians(ey)) + rng.normal(0, noise)
-            F.append([hx, vy, yaw, pitch, 0, rng.normal(0, 0.5), rng.normal(0, 0.5), 60])
+            op = 0.32 - 0.04 * np.sin(np.radians(ey)) + rng.normal(0, 0.003)   # l'œil se ferme un peu vers le bas
+            F.append([hx, vy, op, yaw, pitch, 0, rng.normal(0, 0.5), rng.normal(0, 0.5), 60])
             XY.append([x, y])
             G.append(g)
     return np.array(F), np.array(XY, float), np.array(G)
@@ -104,7 +105,8 @@ def test_calibration_analysis():
     samples = []
     for f, (x, y), g in zip(F, XY, G):
         feat = dict(zip(camera.FEATURES, f))
-        feat["open"] = 0.45 if rng.random() > 0.03 else 0.1      # quelques clignements
+        if rng.random() < 0.03:
+            feat["open"] = 0.1                                   # quelques clignements
         samples.append(("train" if g < 18 else "valid", g, x, y, feat))
     with tempfile.TemporaryDirectory() as d:
         camera_calibrate.MODEL_FILE = Path(d) / "gaze_model.json"

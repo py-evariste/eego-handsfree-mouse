@@ -3,10 +3,12 @@ Suivi du regard par la webcam : capture vidéo + repères du visage MediaPipe (i
 
 Un thread d'arrière-plan lit la caméra et calcule, pour chaque image, un vecteur de caractéristiques :
     hx, vy   position de l'iris dans l'œil (moyenne des deux yeux), normalisée par la largeur de l'œil
-             hx : ~0 = coin externe, ~1 = coin interne (vu dans l'image) ; vy : positif vers le bas
+             hx : ~0 = coin externe, ~1 = coin interne (vu dans l'image) ;
+             vy : par rapport à la ligne des coins de l'œil (qui ne bougent pas), positif vers le bas
+    open     ouverture des yeux : sert aussi d'indice vertical (les paupières suivent le regard :
+             l'œil se ferme un peu quand on regarde en bas) et à rejeter les clignements
     yaw, pitch, roll   rotation de la tête (degrés), d'après la matrice de transformation faciale
     tx, ty, tz         translation de la tête (cm)
-    open               ouverture des yeux (pour rejeter les clignements)
 
     python camera.py              # aperçu : visage, repères des yeux et caractéristiques en direct (Échap pour quitter)
     python camera.py --index 1    # autre caméra
@@ -39,7 +41,7 @@ EYE_A = {"outer": 33, "inner": 133, "up": 159, "down": 145, "iris": 468}
 # œil « B » (œil gauche de la personne)
 EYE_B = {"outer": 263, "inner": 362, "up": 386, "down": 374, "iris": 473}
 
-FEATURES = ["hx", "vy", "yaw", "pitch", "roll", "tx", "ty", "tz"]
+FEATURES = ["hx", "vy", "open", "yaw", "pitch", "roll", "tx", "ty", "tz"]
 
 
 def ensure_model():
@@ -63,7 +65,9 @@ def eye_features(pts, eye):
     if v[1] < 0:                       # toujours orienté vers le bas de l'image (sinon les deux yeux s'annulent)
         v = -v
     hx = float(np.dot(iris - p_out, u) / w)
-    mid = (p_up + p_down) / 2
+    # référence verticale = milieu des coins de l'œil (fixes) et non milieu des paupières :
+    # les paupières suivent le regard et annuleraient presque tout le signal vertical
+    mid = (p_out + p_in) / 2
     vy = float(np.dot(iris - mid, v) / w)
     opening = float(np.hypot(*(p_down - p_up)) / w)
     return hx, vy, opening

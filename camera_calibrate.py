@@ -183,6 +183,10 @@ def main():
     if args.refit:
         d = np.load(HERE / "camera_calib_raw.npz")
         names = [str(n) for n in d["features"]]
+        if names != FEATURES:
+            print("❌ Ces données d'entraînement viennent d'une ancienne version (caractéristiques différentes) : "
+                  "relancer python camera_calibrate.py")
+            return
         samples = [(str(ph), int(g), float(xy[0]), float(xy[1]), dict(zip(names, f), open=float(o)))
                    for ph, g, xy, f, o in zip(d["phase"], d["group"], d["XY"], d["F"], d["open"])]
         analyze.pairs = []
