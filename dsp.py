@@ -18,8 +18,14 @@ class RealtimeProcessor:
         self.sos_eog = signal.butter(4, config.EOG_LOWPASS / nyq, "low", output="sos")
         hi = min(config.EMG_BAND[1], nyq * 0.9)
         self.sos_emg = signal.butter(4, [config.EMG_BAND[0] / nyq, hi / nyq], "band", output="sos")
-        b, a = signal.iirnotch(config.NOTCH, 30, rate)
-        self.sos_notch = signal.tf2sos(b, a)
+        # 工频及谐波（50/100/150/200 Hz）都陷掉：实测垂直眼电通道 100、150 Hz 谐波明显，会抬高肌电包络的静息值
+        secs = []
+        f = config.NOTCH
+        while f < nyq * 0.95:
+            b, a = signal.iirnotch(f, 30, rate)
+            secs.append(signal.tf2sos(b, a))
+            f += config.NOTCH
+        self.sos_notch = np.vstack(secs)
         self.env_len = max(1, int(config.EMG_ENV_WIN * rate))
         self.reset()
 
@@ -33,8 +39,7 @@ class RealtimeProcessor:
         # 用第一个样本初始化低通状态，避免开机时眼电从 0 爬到直流电平的长瞬态
         zi_eog = signal.sosfilt_zi(self.sos_eog)
         self.z_eog = zi_eog[:, :, None] * first[None, None, :2]
-        self.z_notch = np.zeros((self.sos_notch.shape[0], 2, 4))
-        self.z_notch[:, :, :2] = signal.sosfilt_zi(self.sos_notch)[:, :, None] * first[None, None, :2]
+        self.z_notch = signal.sosfilt_zi(self.sos_notch)[:, :, None] * first[None, None, :]
         self.z_emg = np.zeros((self.sos_emg.shape[0], 2, 2))
 
     def process(self, raw):
