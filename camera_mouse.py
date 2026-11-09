@@ -11,7 +11,9 @@ Avec --clicks (calibration.json nécessaire) :
     dents, moyen (0,6–1 s)      clic droit
     dents, long (≥ 1 s)         pause / reprise
 Le curseur est figé pendant un serrage de dents (le visage bouge et fausse l'estimation du regard).
-Touches : F8 = pause / reprise, Échap = quitter.
+Touches : F8 = pause / reprise, F9 = recentrage (regarder le centre de l'écran puis appuyer), Échap = quitter.
+Si l'estimation est décalée en permanence (par exemple trop haut), F9 corrige ce décalage ;
+on peut aussi le fixer au lancement avec --offset-x / --offset-y (px, positif = vers la droite / le bas).
 """
 
 import argparse
@@ -33,7 +35,7 @@ from camera_calibrate import MODEL_FILE
 from gaze_model import GazeModel, OneEuro
 
 user32 = ctypes.windll.user32
-VK_ESCAPE, VK_F8 = 0x1B, 0x77
+VK_ESCAPE, VK_F8, VK_F9 = 0x1B, 0x77, 0x78
 LEFTDOWN, LEFTUP, RIGHTDOWN, RIGHTUP = 0x02, 0x04, 0x08, 0x10
 
 
@@ -96,6 +98,8 @@ def main():
                     help="lissage au repos (Hz du filtre 1 €) : plus petit = plus stable, plus grand = plus réactif")
     ap.add_argument("--beta", type=float, default=0.002, help="réactivité du filtre aux mouvements rapides")
     ap.add_argument("--dead-px", type=float, default=15, help="ne bouge pas le curseur pour un écart inférieur (px)")
+    ap.add_argument("--offset-x", type=float, default=0, help="correction horizontale (px, positif = vers la droite)")
+    ap.add_argument("--offset-y", type=float, default=0, help="correction verticale (px, positif = vers le bas)")
     args = ap.parse_args()
 
     try:
@@ -114,11 +118,13 @@ def main():
     paused = False
     freeze_until = 0.0
     opening = deque(maxlen=300)
+    recent = deque(maxlen=60)                       # prédictions brutes récentes (pour F9)
+    offset = np.array([args.offset_x, args.offset_y], dtype=float)
     cur = None
-    key_pressed(VK_ESCAPE), key_pressed(VK_F8)
+    key_pressed(VK_ESCAPE), key_pressed(VK_F8), key_pressed(VK_F9)
 
     print(f"Contrôle par caméra{' (essai : la souris ne bouge pas)' if args.dry_run else ''}"
-          f"{' + clics eego' if clicks else ''}    Échap = quitter, F8 = pause")
+          f"{' + clics eego' if clicks else ''}    Échap = quitter, F8 = pause, F9 = recentrage")
     last_print = 0.0
     try:
         with CameraGaze(args.index) as cam:
@@ -127,6 +133,14 @@ def main():
                 if key_pressed(VK_ESCAPE):
                     print("\nÉchap : sortie")
                     break
+                if key_pressed(VK_F9) and recent:
+                    t_last = recent[-1][0]
+                    pts = np.array([q for t, q in recent if t_last - t < 0.5])
+                    offset = np.array([W / 2, H / 2]) - np.median(pts, axis=0)
+                    filt.reset()
+                    beep(1200)
+                    print(f"\nF9 : recentrage, correction x {offset[0]:+.0f} px, y {offset[1]:+.0f} px "
+                          f"(pour la garder : --offset-x {offset[0]:.0f} --offset-y {offset[1]:.0f})")
                 if key_pressed(VK_F8):
                     paused = not paused
                     beep(440 if paused else 880)
@@ -151,7 +165,8 @@ def main():
                     if f["open"] < 0.7 * np.median(opening):      # clignement : on ignore l'image
                         continue
                     p = model.predict(vector(f))[0]
-                    p = np.clip(p, [0, 0], [W - 1, H - 1])
+                    recent.append((f["t"], p))
+                    p = np.clip(p + offset, [0, 0], [W - 1, H - 1])
                     cur = filt(p, f["t"])
                 if cur is None or paused or now < freeze_until:
                     continue

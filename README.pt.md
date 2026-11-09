@@ -178,6 +178,7 @@ python camera_mouse.py --clicks     # 4. câmara para mover + dentes (eego) para
 ```
 
 Conselhos: rosto bem iluminado de frente, câmara à altura dos olhos, mesma distância e posição que no treino; se a posição ou a luz mudarem, voltar a treinar.
+Se a estimativa estiver sempre desviada (por exemplo demasiado alta): olhar para o centro do ecrã e premir **F9**; a correção mostrada pode ser reutilizada com `--offset-x` / `--offset-y`.
 
 ## Testes (sem hardware)
 

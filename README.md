@@ -190,6 +190,8 @@ python camera_mouse.py --clicks     # 4. caméra pour déplacer + dents pour cli
 Conseils : visage bien éclairé de face (pas de fenêtre derrière soi), caméra à hauteur des yeux,
 même distance et même position que pendant l'entraînement. Si l'on bouge beaucoup ou si l'éclairage change,
 refaire `camera_calibrate.py`. Réglages : `--smooth` (plus petit = plus stable), `--dead-px` (seuil anti-tremblement).
+Si l'estimation est décalée en permanence (par exemple trop haut) : regarder le centre de l'écran et appuyer sur **F9** ;
+le programme affiche la correction, à réutiliser ensuite avec `--offset-x` / `--offset-y`.
 
 ## Tests (sans matériel)
 
