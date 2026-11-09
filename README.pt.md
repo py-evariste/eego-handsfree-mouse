@@ -1,13 +1,13 @@
 # Rato mãos-livres com eego (EOG + EMG)
 
-[中文](README.md) | **Português**
+[Français](README.md) | **Português**
 
 Um rato controlado sem as mãos, com o amplificador eemagine eego EE-410 (8 canais bipolares) e os elétrodos de pressão XE-293:
 
 - O movimento dos olhos (EOG) desloca o cursor.
 - A atividade muscular da face (EMG) faz os cliques: cerrar os dentes = botão esquerdo, levantar as sobrancelhas = botão direito.
 
-> As mensagens que os programas mostram no ecrã/terminal estão em chinês. Este documento explica o que cada passo faz.
+> As mensagens que os programas mostram no ecrã/terminal estão em francês. Este documento explica o que cada passo faz.
 
 ## Ficheiros
 
@@ -57,7 +57,7 @@ Verifique três coisas:
 
 - **Versão do firmware**: o SDK 1.3.19 só suporta 011700, 011800 e 012000–020000.
 - **Tipo de canais**: os 8 canais devem aparecer como `bipolar`.
-- **sample_counter**: deve indicar 0 descontinuidades ("不连续 0 处").
+- **sample_counter**: deve indicar 0 descontinuidades.
 
 ### 3. Colocar os elétrodos
 

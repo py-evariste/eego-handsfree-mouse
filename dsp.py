@@ -1,8 +1,9 @@
 """
-实时滤波：输入原始 4 路信号（µV），输出
-    heog、veog：10 Hz 低通 + 50 Hz 陷波后的眼电（保留直流，µV）
-    jaw、brow ：30–200 Hz 带通 + 陷波后的肌电包络（滑动 RMS，µV）
-滤波器带状态，可以一块一块地喂数据（实时），结果和一次性喂完全一样（离线分析用同一个类）。
+Filtrage en temps réel : entrée = 4 signaux bruts (µV), sortie =
+    heog, veog : EOG après passe-bas 10 Hz + coupe-bande secteur (composante continue conservée, µV)
+    jaw, brow  : enveloppe EMG après passe-bande 30–200 Hz + coupe-bande (RMS glissante, µV)
+Les filtres gardent leur état : on peut envoyer les données bloc par bloc (temps réel) et le résultat
+est identique à un traitement d'un seul coup (la même classe sert à l'analyse hors ligne).
 """
 
 import numpy as np
@@ -18,7 +19,8 @@ class RealtimeProcessor:
         self.sos_eog = signal.butter(4, config.EOG_LOWPASS / nyq, "low", output="sos")
         hi = min(config.EMG_BAND[1], nyq * 0.9)
         self.sos_emg = signal.butter(4, [config.EMG_BAND[0] / nyq, hi / nyq], "band", output="sos")
-        # 工频及谐波（50/100/150/200 Hz）都陷掉：实测垂直眼电通道 100、150 Hz 谐波明显，会抬高肌电包络的静息值
+        # Coupe le secteur et ses harmoniques (50/100/150/200 Hz) : sur l'appareil, la voie EOG verticale montre
+        # des harmoniques à 100 et 150 Hz qui relèvent le niveau de repos de l'enveloppe EMG
         secs = []
         f = config.NOTCH
         while f < nyq * 0.95:
@@ -36,14 +38,14 @@ class RealtimeProcessor:
         self.sq_hist = np.zeros((0, 2))
 
     def _init_states(self, first):
-        # 用第一个样本初始化低通状态，避免开机时眼电从 0 爬到直流电平的长瞬态
+        # Initialise l'état du passe-bas avec le premier échantillon, pour éviter la longue montée de 0 jusqu'au niveau continu
         zi_eog = signal.sosfilt_zi(self.sos_eog)
         self.z_eog = zi_eog[:, :, None] * first[None, None, :2]
         self.z_notch = signal.sosfilt_zi(self.sos_notch)[:, :, None] * first[None, None, :]
         self.z_emg = np.zeros((self.sos_emg.shape[0], 2, 2))
 
     def process(self, raw):
-        """raw: (n, 4) µV，顺序为 config.SIGNALS → (n, 4) 处理后信号。"""
+        """raw : (n, 4) en µV, dans l'ordre de config.SIGNALS → (n, 4) signaux traités."""
         raw = np.asarray(raw, dtype=float)
         if raw.size == 0:
             return np.empty((0, 4))
@@ -52,7 +54,7 @@ class RealtimeProcessor:
         x, self.z_notch = signal.sosfilt(self.sos_notch, raw, axis=0, zi=self.z_notch)
         eog, self.z_eog = signal.sosfilt(self.sos_eog, x[:, :2], axis=0, zi=self.z_eog)
         emg, self.z_emg = signal.sosfilt(self.sos_emg, x[:, 2:], axis=0, zi=self.z_emg)
-        # 滑动 RMS 包络
+        # Enveloppe RMS glissante
         sq = np.vstack([self.sq_hist, emg ** 2])
         c = np.cumsum(np.vstack([np.zeros((1, 2)), sq]), axis=0)
         L = self.env_len

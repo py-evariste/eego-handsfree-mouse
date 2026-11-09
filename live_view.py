@@ -1,15 +1,17 @@
 """
-实时波形：贴电极时用来检查信号（最近 10 秒）。
+Visualisation en temps réel : pour vérifier le signal en posant les électrodes (10 dernières secondes).
 
-    python live_view.py                  # 真实放大器
-    python live_view.py --sim            # 模拟器（方向键/J/B）
-    python live_view.py --save rec.npz   # 同时把原始数据录下来（关窗口时保存）
+    python live_view.py                  # amplificateur réel
+    python live_view.py --sim            # simulateur (flèches / J / B)
+    python live_view.py --save rec.npz   # enregistre aussi les données brutes (sauvegardées à la fermeture)
 
-四行分别是：水平眼电、垂直眼电（µV，低通 10 Hz）、咬牙肌电包络、挑眉肌电包络（µV）。
-正常的样子：
-    看右 → 水平眼电明显上升（几十到几百 µV），看左 → 下降；看上/下 → 垂直眼电升/降；眨眼 → 垂直眼电尖峰
-    咬牙 → 第三行明显抬高（静息的 5 倍以上）；挑眉 → 第四行抬高
-如果某行是一条很粗的噪声带或一直贴着上下边，多半是电极没贴牢。
+Les quatre lignes sont : EOG horizontal, EOG vertical (µV, passe-bas 10 Hz), enveloppe EMG des dents,
+enveloppe EMG des sourcils (µV).
+Aspect normal :
+    regard à droite → l'EOG horizontal monte nettement (quelques dizaines à centaines de µV), à gauche → il descend ;
+    en haut / en bas → l'EOG vertical monte / descend ; clignement → pic sur l'EOG vertical
+    serrer les dents → la 3e ligne monte nettement (plus de 5 fois le repos) ; lever les sourcils → la 4e ligne monte
+Si une ligne est une large bande de bruit ou reste collée en haut ou en bas, l'électrode est probablement mal collée.
 """
 
 import argparse
@@ -21,14 +23,14 @@ from matplotlib.animation import FuncAnimation
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
-plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["font.sans-serif"] = ["Segoe UI", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 
 import config
 from dsp import RealtimeProcessor
 from source import make_source
 
-TITLES = ["水平眼电 HEOG (µV)", "垂直眼电 VEOG (µV)", "咬牙肌电包络 (µV)", "挑眉肌电包络 (µV)"]
+TITLES = ["EOG horizontal HEOG (µV)", "EOG vertical VEOG (µV)", "Enveloppe EMG dents (µV)", "Enveloppe EMG sourcils (µV)"]
 
 
 def main():
@@ -46,7 +48,7 @@ def main():
     t = np.arange(n) / rate - args.seconds
 
     src = make_source(args.sim).start()
-    print(f"数据源：{src.info}")
+    print(f"Source de données : {src.info}")
     fig, axes = plt.subplots(4, 1, sharex=True, figsize=(12, 8))
     lines = []
     for ax, title in zip(axes, TITLES):
@@ -54,7 +56,7 @@ def main():
         ax.set_title(title, fontsize=10, loc="left")
         ax.grid(alpha=0.3)
         lines.append(ln)
-    axes[-1].set_xlabel("时间 (s)")
+    axes[-1].set_xlabel("Temps (s)")
     axes[-1].set_xlim(-args.seconds, 0)
     fig.tight_layout()
     status = fig.text(0.99, 0.995, "", ha="right", va="top", fontsize=9)
@@ -72,7 +74,7 @@ def main():
             ln.set_ydata(buf[:, i])
             v = buf[:, i][~np.isnan(buf[:, i])]
             if len(v):
-                if i < 2:     # 眼电：去掉均值后显示，范围至少 ±100 µV
+                if i < 2:     # EOG : affiché autour de la médiane, plage d'au moins ±100 µV
                     c = np.median(v)
                     r = max(100, np.percentile(np.abs(v - c), 99) * 1.2)
                     ax.set_ylim(c - r, c + r)
@@ -80,11 +82,11 @@ def main():
                     ax.set_ylim(0, max(20, np.percentile(v, 99.5) * 1.2))
         last = buf[-rate:]
         if not np.isnan(last).any():
-            status.set_text(f"最近 1 秒：HEOG 直流 {last[:, 0].mean() / 1000:.0f} mV   VEOG 直流 {last[:, 1].mean() / 1000:.0f} mV   "
-                            f"咬牙包络 {np.median(last[:, 2]):.0f} µV   挑眉包络 {np.median(last[:, 3]):.0f} µV   "
-                            f"已收 {src.total} 样本   丢样 {src.dropped}")
+            status.set_text(f"Dernière seconde : HEOG continu {last[:, 0].mean() / 1000:.0f} mV   VEOG continu {last[:, 1].mean() / 1000:.0f} mV   "
+                            f"env. dents {np.median(last[:, 2]):.0f} µV   env. sourcils {np.median(last[:, 3]):.0f} µV   "
+                            f"{src.total} échantillons reçus   {src.dropped} perdus")
         else:
-            status.set_text(f"已收 {src.total} 样本   丢样 {src.dropped}")
+            status.set_text(f"{src.total} échantillons reçus   {src.dropped} perdus")
         return lines
 
     anim = FuncAnimation(fig, update, interval=50, cache_frame_data=False)  # noqa: F841
@@ -95,7 +97,7 @@ def main():
         if args.save and raw_log:
             raw = np.concatenate(raw_log)
             np.savez(args.save, raw=raw, signals=config.SIGNALS, rate=rate)
-            print(f"已保存 {len(raw)} 个样本到 {args.save}")
+            print(f"{len(raw)} échantillons enregistrés dans {args.save}")
 
 
 if __name__ == "__main__":

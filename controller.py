@@ -1,19 +1,20 @@
 """
-控制逻辑（纯计算，不碰鼠标，方便测试）。
+Logique de contrôle (calcul pur, ne touche pas la souris, facile à tester).
 
-输入：dsp.RealtimeProcessor 输出的 (n, 4) 块 [heog, veog, jaw 包络, brow 包络]
-输出：动作列表，例如 [("move", dx, dy), ("click", "left"), ("pause", True), ("recenter",)]
+Entrée : blocs (n, 4) produits par dsp.RealtimeProcessor [heog, veog, enveloppe jaw, enveloppe brow]
+Sortie : liste d'actions, par exemple [("move", dx, dy), ("click", "left"), ("pause", True), ("recenter",)]
 
-眼电 → 光标
-    joystick（默认）：眼睛往左/右/上/下偏过死区，光标就往那个方向持续移动，偏得越多越快；
-                      回到中间就停。眼睛在中间时基线会慢慢跟上漂移。
-    absolute        ：光标位置 = 校准映射出来的注视位置（需要经常“重新居中”）。
-肌电 → 按键
-    咬牙短（0.08–0.6 s）  左键单击（快速咬两次 = 双击）
-    咬牙长（≥ 1 s）       暂停 / 继续（暂停时只认这个手势）
-    挑眉短                右键单击
-    挑眉长（≥ 1 s）       重新居中（先看屏幕中间再挑眉）
-做手势时光标冻结，避免咬牙/挑眉带来的眼电伪迹让光标乱跑。
+EOG → curseur
+    joystick (défaut) : quand le regard dépasse la zone morte vers la gauche/droite/haut/bas, le curseur avance
+                        en continu dans cette direction, d'autant plus vite que l'écart est grand ; il s'arrête
+                        au retour au centre. Quand les yeux sont au centre, la ligne de base suit lentement la dérive.
+    absolute          : position du curseur = position du regard d'après la calibration (à recentrer souvent).
+EMG → boutons
+    dents, court (0.08–0.6 s)   clic gauche (deux fois rapidement = double-clic)
+    dents, long (≥ 1 s)         pause / reprise (en pause, seul ce geste est reconnu)
+    sourcils, court             clic droit
+    sourcils, long (≥ 1 s)      recentrage (regarder le centre de l'écran puis lever les sourcils)
+Le curseur est figé pendant un geste, pour que les artefacts EOG dus aux dents/sourcils ne le fassent pas bouger.
 """
 
 from collections import deque
@@ -24,12 +25,12 @@ import config
 
 
 class EmgGesture:
-    """单个肌电通道的手势识别：带滞回的阈值 + 按持续时间分类。"""
+    """Reconnaissance de gestes sur une voie EMG : seuil à hystérésis + classement selon la durée."""
 
     def __init__(self, name, thr_hi, thr_lo, cfg, rest=None, rate=config.RATE):
         self.name, self.hi, self.lo, self.cfg = name, thr_hi, thr_lo, cfg
-        # 自适应噪声底：静息包络会随电极接触变化（实测从 3 µV 涨到 10 µV），
-        # 阈值至少取 噪声底 × 3，避免噪声变大后连续误触发
+        # Plancher de bruit adaptatif : l'enveloppe au repos varie avec le contact des électrodes (mesuré : de 3 à 10 µV) ;
+        # le seuil vaut au moins 3 × le plancher, pour éviter les déclenchements en rafale quand le bruit augmente
         self.hi0, self.lo0 = thr_hi, thr_lo
         self.floor = rest if rest is not None else thr_lo / 2
         self.alpha = 1.0 / (cfg.get("emg_floor_tau", 5.0) * rate)
@@ -44,7 +45,7 @@ class EmgGesture:
         return env / self.hi
 
     def update(self, t, env):
-        """返回事件：None / "short" / "medium" / "long"（长按在达到时长时立即触发，松开不再触发）。"""
+        """Renvoie un événement : None / "short" / "medium" / "long" ("long" est émis dès que la durée est atteinte, pas au relâchement)."""
         ev = None
         if not self.active and env < self.hi:
             self.floor += (env - self.floor) * self.alpha
@@ -84,18 +85,19 @@ class Controller:
         m = calib["emg"]
         self.jaw = EmgGesture("jaw", m["jaw_hi"], m["jaw_lo"], self.c, m.get("jaw_rest"), rate)
         self.brow = EmgGesture("brow", m["brow_hi"], m["brow_lo"], self.c, m.get("brow_rest"), rate)
-        # 挑眉不可用时：咬牙 0.6–1 s = 右键；暂停后继续时自动重新居中（继续时请看屏幕中间）
+        # Si les sourcils sont désactivés : dents 0.6–1 s = clic droit ; recentrage automatique à la reprise après pause
+        # (regarder le centre de l'écran en reprenant)
         self.brow_disabled = bool(m.get("brow_disabled", False))
         self.recenter_pending = False
         self.paused = False
         self.freeze_until = 0.0
-        self.v_hold = 0.0                # 垂直偏移已持续时间
-        self.frac = np.zeros(2)          # 未满 1 像素的移动量
-        self.recent = deque(maxlen=int(0.4 * rate))   # 最近 0.4 s 的眼电，用来求中值（去眨眼）
+        self.v_hold = 0.0                # durée de l'écart vertical en cours
+        self.frac = np.zeros(2)          # déplacement résiduel inférieur à 1 pixel
+        self.recent = deque(maxlen=int(0.4 * rate))   # EOG des 0.4 dernières s, pour la médiane (supprime les clignements)
         self.abs_pos = None
         self.gaze = (0.0, 0.0)
 
-    # ---------- 眼电 → 归一化注视方向 (x 右为正, y 上为正) ----------
+    # ---------- EOG → direction du regard normalisée (x positif à droite, y positif en haut) ----------
     def normalize(self, h, v):
         dh, dv = h - self.base[0], v - self.base[1]
         x = dh / self.amp["right"] if dh / self.amp["right"] > 0 else -dh / self.amp["left"]
@@ -109,11 +111,11 @@ class Controller:
         self.abs_pos = None
 
     def step(self, block):
-        """处理一块数据，返回动作列表。"""
+        """Traite un bloc de données et renvoie la liste d'actions."""
         actions = []
         if len(block) == 0:
             return actions
-        # --- 肌电手势（逐样本，时间精确）---
+        # --- Gestes EMG (échantillon par échantillon, timing précis) ---
         jaw_on_any = brow_on_any = False
         for k in range(len(block)):
             self.t += self.dt
@@ -121,7 +123,7 @@ class Controller:
             eb = self.brow.update(self.t, block[k, 3])
             jaw_on_any |= self.jaw.active
             brow_on_any |= self.brow.active
-            # 两个通道同时激活时（串扰），只认相对阈值更强的那个
+            # si les deux voies sont actives en même temps (diaphonie), on ne retient que la plus forte par rapport à son seuil
             if ej and eb:
                 if self.jaw.peak / self.jaw.hi >= self.brow.peak / self.brow.hi:
                     eb = None
@@ -132,8 +134,9 @@ class Controller:
             if eb and self.jaw.active and self.jaw.peak / self.jaw.hi > self.brow.peak / self.brow.hi:
                 eb = None
             if (ej or eb) and self.c["mode"] == "joystick":
-                # 做完任何面部动作后自动重新居中：
-                # 5 片模式下咬牙/挑眉会牵动眼电电极的皮肤，直流电位跳几 mV，比眼动信号大得多
+                # recentrage automatique après tout geste facial :
+                # en mode 5 électrodes, serrer les dents / lever les sourcils tire la peau sous les électrodes EOG
+                # et fait sauter le potentiel continu de plusieurs mV, bien plus que le signal des yeux
                 self.recenter_pending = True
             if ej == "long":
                 self.paused = not self.paused
@@ -161,7 +164,7 @@ class Controller:
             self.freeze_until = self.t + 0.25
 
         dt_block = len(block) * self.dt
-        # 用 0.4 s 中值：眨眼（~0.2 s 的尖峰）基本不影响
+        # médiane sur 0.4 s : un clignement (pic de ~0.2 s) n'a presque pas d'effet
         h_med, v_med = np.median(np.array(self.recent), axis=0)
         h_now, v_now = block[-max(1, int(0.04 * self.rate)):, :2].mean(axis=0)
         x, y = self.normalize(h_now, v_now)
@@ -174,18 +177,19 @@ class Controller:
 
         dz = self.c["dead_zone"]
         if self.c["mode"] == "joystick":
-            # 垂直方向要持续 vertical_hold 秒才算，过滤眨眼
+            # un écart vertical doit durer vertical_hold s pour compter (filtre les clignements)
             self.v_hold = self.v_hold + dt_block if abs(y) > dz else 0.0
             yy = ym if self.v_hold >= self.c["vertical_hold"] else 0.0
             vx = self._speed(x)
             vy = self._speed(yy)
-            # 基线跟随漂移：眼睛在中间时快一些，偏在一边时很慢（防止长时间漂移后再也回不到死区）
+            # la ligne de base suit la dérive : plus vite quand les yeux sont au centre, très lentement quand ils sont décalés
+            # (évite de ne plus jamais revenir dans la zone morte après une longue dérive)
             centered = abs(x) < dz * 0.7 and abs(y) < dz * 0.7
             tau = self.c["baseline_tau"] if centered else self.c["baseline_tau_out"]
             self.base += (np.array([h_med, v_med]) - self.base) * min(1.0, dt_block / tau)
             move = np.array([vx, -vy]) * dt_block + self.frac
         else:
-            # 绝对模式：注视点 → 屏幕坐标，水平用当前值，垂直用中值（去眨眼）
+            # mode absolu : point de regard → coordonnées écran ; horizontal = valeur actuelle, vertical = médiane (sans clignements)
             tx = self.W / 2 + np.clip(x, -1.1, 1.1) * self.W * 0.45
             ty = self.H / 2 - np.clip(ym, -1.1, 1.1) * self.H * 0.45
             target = np.array([tx, ty])

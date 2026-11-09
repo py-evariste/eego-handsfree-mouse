@@ -1,16 +1,17 @@
 """
-数据源：后台线程不停地取数据，主程序随时调用 read() 拿到新样本 (n, 4)，单位 µV，
-顺序为 config.SIGNALS（heog, veog, jaw, brow）。
+Sources de données : un thread d'arrière-plan lit les données en continu ; le programme principal
+appelle read() à tout moment pour obtenir les nouveaux échantillons (n, 4), en µV,
+dans l'ordre de config.SIGNALS (heog, veog, jaw, brow).
 
-    EegoSource  真实放大器（eego EE-410）
-    SimSource   模拟器，没有硬件时用来测试整套程序：
-                  方向键 ← → ↑ ↓   眼睛往那个方向看
-                  J 键（按住）      咬牙
-                  B 键（按住）      挑眉
-                  另外会随机眨眼、有基线漂移、噪声和 50 Hz 工频干扰
-                也可以传入 script(t) 函数，按脚本生成数据（自动测试用）
+    EegoSource  amplificateur réel (eego EE-410)
+    SimSource   simulateur, pour tester l'ensemble sans matériel :
+                  flèches ← → ↑ ↓   regarder dans cette direction
+                  touche J (maintenue)  serrer les dents
+                  touche B (maintenue)  lever les sourcils
+                  plus des clignements aléatoires, une dérive de la ligne de base, du bruit et du 50 Hz secteur
+                On peut aussi passer une fonction script(t) pour générer les données selon un scénario (tests automatiques)
 
-make_source(sim=False) 按参数选一个。
+make_source(sim=False) choisit l'une ou l'autre.
 """
 
 import threading
@@ -28,8 +29,8 @@ class _ThreadedSource:
         self._stop = threading.Event()
         self._thread = None
         self.error = None
-        self.total = 0          # 已收到的样本数
-        self.dropped = 0        # 检测到的丢样数
+        self.total = 0          # nombre d'échantillons reçus
+        self.dropped = 0        # nombre d'échantillons perdus détectés
 
     def start(self):
         self._thread = threading.Thread(target=self._run_safe, daemon=True)
@@ -39,7 +40,7 @@ class _ThreadedSource:
     def _run_safe(self):
         try:
             self._run()
-        except Exception as e:      # 把后台线程的错误交给主线程
+        except Exception as e:      # transmettre l'erreur du thread d'arrière-plan au thread principal
             self.error = e
 
     def _push(self, block):
@@ -49,7 +50,7 @@ class _ThreadedSource:
 
     def read(self):
         if self.error:
-            raise RuntimeError(f"数据源出错：{self.error}") from self.error
+            raise RuntimeError(f"Erreur de la source de données : {self.error}") from self.error
         with self._lock:
             blocks, self._buf = self._buf, []
         if not blocks:
@@ -79,12 +80,12 @@ class EegoSource(_ThreadedSource):
 
     def start(self):
         super().start()
-        # 等放大器打开（或者报错），这样调用方马上就知道硬件是否正常
+        # attendre l'ouverture de l'amplificateur (ou une erreur), pour que l'appelant sache tout de suite si le matériel fonctionne
         self._ready.wait(timeout=15)
         if self.error:
-            raise RuntimeError(f"打开放大器失败：{self.error}") from self.error
+            raise RuntimeError(f"Échec de l'ouverture de l'amplificateur : {self.error}") from self.error
         if not self._ready.is_set():
-            raise RuntimeError("打开放大器超时")
+            raise RuntimeError("Délai dépassé à l'ouverture de l'amplificateur")
         return self
 
     def _run(self):
@@ -97,14 +98,14 @@ class EegoSource(_ThreadedSource):
                         types = [t for _, t in st.channels]
                         data_cols = [k for k, t in enumerate(types) if t in ("bipolar", "reference")]
                         if len(data_cols) < max(self.cols) + 1:
-                            raise RuntimeError(f"通道不够：{st.channels}")
+                            raise RuntimeError(f"Pas assez de voies : {st.channels}")
                         cols = [data_cols[c] for c in self.cols]
                         cnt_col = types.index("sample_counter") if "sample_counter" in types else None
                         self.info["stream_channels"] = st.channels
                         self._ready.set()
                         last = None
                         while not self._stop.is_set():
-                            time.sleep(0.03)          # SDK 要求 < 1 s 取一次
+                            time.sleep(0.03)          # le SDK exige une lecture toutes les < 1 s
                             d = st.get_data()
                             if not len(d):
                                 continue
@@ -120,7 +121,7 @@ class EegoSource(_ThreadedSource):
 
 
 class SimSource(_ThreadedSource):
-    """模拟 EOG/EMG。眼电幅度：水平 ±1 对应 ±250 µV，垂直 ±1 对应 ±200 µV（接近真实数量级）。"""
+    """Simulation EOG/EMG. Amplitude EOG : horizontal ±1 → ±250 µV, vertical ±1 → ±200 µV (ordre de grandeur réaliste)."""
 
     H_GAIN, V_GAIN = 250.0, 200.0
 
@@ -137,7 +138,7 @@ class SimSource(_ThreadedSource):
         self.blink_t0 = -10.0
         self.info = {"type": "simulator", "serial": "SIM", "firmware": 0}
 
-    # ---- 键盘输入（Windows 全局按键状态）----
+    # ---- Entrée clavier (état global des touches Windows) ----
     @staticmethod
     def _keys():
         import ctypes
@@ -148,7 +149,7 @@ class SimSource(_ThreadedSource):
         return {"x": x, "y": y, "jaw": down(ord("J")), "brow": down(ord("B")), "blink": None}
 
     def generate(self, n):
-        """生成 n 个样本（µV）。"""
+        """Génère n échantillons (µV)."""
         dt = 1.0 / self.rate
         out = np.empty((n, 4))
         state = self.script(self.t) if self.script else self._keys()
@@ -156,13 +157,13 @@ class SimSource(_ThreadedSource):
             t = self.t
             if self.script and k % 10 == 0:
                 state = self.script(t)
-            # 眼球扫视：时间常数约 30 ms 趋近目标
+            # saccade : rejoint la cible avec une constante de temps d'environ 30 ms
             a = dt / 0.03
             self.gx += (state["x"] - self.gx) * min(1, a)
             self.gy += (state["y"] - self.gy) * min(1, a)
-            # 眨眼：垂直通道 +350 µV 的半正弦，持续 200 ms
+            # clignement : demi-sinusoïde de +350 µV sur la voie verticale, durée 200 ms
             blink_now = state.get("blink")
-            if blink_now is None:            # 键盘模式：随机眨眼
+            if blink_now is None:            # mode clavier : clignements aléatoires
                 if t >= self.next_blink:
                     self.blink_t0 = t
                     self.next_blink = t + self.rng.uniform(3, 7)
@@ -170,7 +171,7 @@ class SimSource(_ThreadedSource):
                 self.blink_t0 = t
             tb = t - self.blink_t0
             blink = 350 * np.sin(np.pi * tb / 0.2) if 0 <= tb < 0.2 else 0.0
-            self.drift += self.rng.normal(0, 0.15, 2)          # 基线随机游走
+            self.drift += self.rng.normal(0, 0.15, 2)          # marche aléatoire de la ligne de base
             hum = 8 * np.sin(2 * np.pi * 50 * t)
             jaw = state["jaw"] * self.rng.normal(0, 80)
             brow = state["brow"] * self.rng.normal(0, 60)

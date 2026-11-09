@@ -1,20 +1,22 @@
 """
-eemagine eego SDK 1.3.19 的 Python 封装（ctypes 直接调 eego-SDK.dll 的 C 接口）
+Interface Python du SDK eemagine eego 1.3.19 (ctypes appelle directement l'interface C de eego-SDK.dll)
 
-官方只提供 C++ 头文件；C++ 封装（wrapper.cc）内部调用的是 DLL 导出的一组
-eemagine_sdk_* C 函数。这里按 wrapper.cc 的调用顺序在 Python 里复刻同样的流程：
+Le fabricant ne fournit que des en-têtes C++ ; l'enveloppe C++ (wrapper.cc) appelle en interne
+un ensemble de fonctions C eemagine_sdk_* exportées par la DLL. Ici on reproduit en Python
+la même séquence d'appels que wrapper.cc :
     setup(NULL) → init() → get_amplifiers_info() → open_eeg_stream()
-    → 循环 prefetch() + get_data() → close_stream() → close_amplifier() → exit()
+    → boucle prefetch() + get_data() → close_stream() → close_amplifier() → exit()
 
-注意：官方手册说 C 层“不保证稳定”，但 1.3.19 已经停止更新，对这台 EE-410 来说是固定的。
+Remarque : le manuel indique que la couche C n'est « pas garantie stable », mais la version 1.3.19
+n'évolue plus ; pour cet EE-410 elle est figée.
 
-用法：
+Utilisation :
     from eego import EegoSDK
     with EegoSDK(r"C:\\path\\to\\eego-SDK.dll") as sdk:
         amp = sdk.get_amplifier()
         print(amp.serial, amp.type, amp.firmware)
         with amp.open_eeg_stream(rate=500, bipolar_range=1.5) as st:
-            data = st.get_data()   # (样本数, 通道数) 的 numpy 数组，单位 V
+            data = st.get_data()   # tableau numpy (échantillons, voies), en V
 """
 
 import ctypes as C
@@ -22,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-# 和 wrapper.h 里的 eemagine_sdk_channel_type 顺序一致（注意：和 channel.h 的 C++ 枚举顺序不同）
+# Même ordre que eemagine_sdk_channel_type dans wrapper.h (attention : différent de l'énumération C++ de channel.h)
 CHANNEL_TYPES = {
     0: "reference",
     1: "bipolar",
@@ -36,10 +38,10 @@ CHANNEL_TYPES = {
 }
 
 ERRORS = {
-    -1: "NOT_CONNECTED（放大器被拔掉了）",
+    -1: "NOT_CONNECTED (amplificateur débranché)",
     -2: "ALREADY_EXISTS",
-    -3: "NOT_FOUND（找不到放大器）",
-    -4: "INCORRECT_VALUE（参数错误，或者丢了数据：getData 间隔超过 1 秒 / USB 中断）",
+    -3: "NOT_FOUND (amplificateur introuvable)",
+    -4: "INCORRECT_VALUE (paramètre invalide, ou données perdues : getData espacé de plus d'1 s / coupure USB)",
     -5: "UNKNOWN",
 }
 
@@ -49,7 +51,7 @@ ALL_CHANNELS = 0xFFFFFFFFFFFFFFFF
 class EegoError(RuntimeError):
     def __init__(self, code, detail=""):
         self.code = code
-        super().__init__(f"eego SDK 错误 {code} {ERRORS.get(code, '')} {detail}".strip())
+        super().__init__(f"Erreur eego SDK {code} {ERRORS.get(code, '')} {detail}".strip())
 
 
 class _AmpInfo(C.Structure):
@@ -61,15 +63,15 @@ class _ChanInfo(C.Structure):
 
 
 class EegoSDK:
-    """加载 DLL 并初始化 SDK。整个程序里只建一个，用完调用 close()（或用 with）。"""
+    """Charge la DLL et initialise le SDK. Une seule instance par programme ; appeler close() à la fin (ou utiliser with)."""
 
     def __init__(self, dll_path):
         dll_path = Path(dll_path)
         if not dll_path.is_file():
-            raise FileNotFoundError(f"找不到 {dll_path}")
+            raise FileNotFoundError(f"Fichier introuvable : {dll_path}")
         if dll_path.stat().st_size < 600_000:
-            # E 盘里那份解压出来的 64 位 DLL 只有 352 KB，是坏的；zip 里的完整版是 639 KB
-            raise RuntimeError(f"{dll_path} 只有 {dll_path.stat().st_size} 字节，文件不完整，请从 zip 重新解压")
+            # La DLL 64 bits déjà extraite sur la clé USB ne fait que 352 Ko : elle est corrompue ; la version complète du zip fait 639 Ko
+            raise RuntimeError(f"{dll_path} ne fait que {dll_path.stat().st_size} octets : fichier incomplet, ré-extraire depuis le zip")
         self.dll = C.CDLL(str(dll_path))
         self._declare()
         self.dll.eemagine_sdk_setup(None)
@@ -107,7 +109,7 @@ class EegoSDK:
             f.argtypes, f.restype = args, res
 
     def check(self, rv):
-        """C 函数返回负数表示出错，转成异常（附上 SDK 自己的错误说明）。"""
+        """Une valeur négative renvoyée par une fonction C signale une erreur : on la convertit en exception (avec le message du SDK)."""
         if rv < 0:
             buf = C.create_string_buffer(1024)
             self.dll.eemagine_sdk_get_error_string(buf, 1024)
@@ -126,7 +128,7 @@ class EegoSDK:
     def get_amplifier(self):
         amps = self.list_amplifiers()
         if not amps:
-            raise EegoError(-3, "没有检测到放大器：检查 USB 线、驱动（设备管理器）、放大器 LED")
+            raise EegoError(-3, "Aucun amplificateur détecté : vérifier le câble USB, le pilote (Gestionnaire de périphériques) et la LED de l'amplificateur")
         for extra in amps[1:]:
             extra.close()
         return amps[0]
@@ -189,13 +191,13 @@ class Amplifier:
 
     def open_eeg_stream(self, rate=500, reference_range=1.0, bipolar_range=1.5,
                         ref_mask=ALL_CHANNELS, bip_mask=ALL_CHANNELS):
-        """数据单位 V。同一时间只能有一个 stream，用完必须 close。"""
+        """Données en V. Un seul flux à la fois ; il faut le fermer (close) après usage."""
         sid = self._call("eemagine_sdk_open_eeg_stream", rate, reference_range, bipolar_range,
                          ref_mask, bip_mask)
         return Stream(self.sdk, sid, rate)
 
     def open_impedance_stream(self, ref_mask=ALL_CHANNELS):
-        """数据单位 Ω。get_data() 返回最新一次的阻抗值（1 个样本）。"""
+        """Données en Ω. get_data() renvoie la dernière mesure d'impédance (1 échantillon)."""
         sid = self._call("eemagine_sdk_open_impedance_stream", ref_mask)
         return Stream(self.sdk, sid, None)
 
@@ -221,9 +223,10 @@ class Stream:
         self._open = True
 
     def get_data(self):
-        """取出自上次调用以来的所有样本 → (样本数, 通道数)。两次调用间隔必须 < 1 秒。
+        """Récupère tous les échantillons depuis l'appel précédent → (échantillons, voies).
+        L'intervalle entre deux appels doit être < 1 s.
 
-        最后两列通常是 trigger 和 sample_counter（以 self.channels 为准）。
+        Les deux dernières colonnes sont en général trigger et sample_counter (voir self.channels).
         """
         nbytes = self.sdk.check(self.sdk.dll.eemagine_sdk_prefetch(self.id))
         n_values = nbytes // 8
@@ -232,7 +235,7 @@ class Stream:
         buf = np.empty(n_values, dtype=np.float64)
         self.sdk.check(self.sdk.dll.eemagine_sdk_get_data(
             self.id, buf.ctypes.data_as(C.POINTER(C.c_double)), nbytes))
-        return buf.reshape(-1, self.n_channels)   # 按样本交错：[s0ch0, s0ch1, ..., s1ch0, ...]
+        return buf.reshape(-1, self.n_channels)   # entrelacé par échantillon : [s0ch0, s0ch1, ..., s1ch0, ...]
 
     def close(self):
         if self._open:
